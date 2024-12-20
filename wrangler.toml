@@ -1,0 +1,6 @@
+name = "tts-api" # 你的 Worker 名称，与你的项目仓库名称一致
+main = "./workers.js"  # 你的 Worker 入口文件路径
+compatibility_date = "2024-12-20" # 使用一个兼容日期，确保兼容性
+
+[observability.logs]
+enabled = true
