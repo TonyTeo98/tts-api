@@ -10,8 +10,32 @@ addEventListener("fetch", event => {
 });
 
 async function handleRequest(request) {
+    const allowedOrigins = [
+        /\.ciallo\.de$/,
+        /\.is-an\.org$/,
+        /\.zwei\.de\.eu\.org$/
+    ];
+    const origin = request.headers.get("Origin");
+
+    let corsHeaders = {};
+    if (origin && allowedOrigins.some(regex => regex.test(origin))) {
+        corsHeaders = {
+            "Access-Control-Allow-Origin": origin, // 动态设置允许的域名
+            "Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, x-auth-token",
+            "Access-Control-Max-Age": "86400"
+        };
+    }
+
     if (request.method === "OPTIONS") {
-        return handleOptions(request);
+        return new Response(null, {
+            status: 204,
+            headers: {
+                ...corsHeaders,
+                "Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS",
+                "Access-Control-Allow-Headers": request.headers.get("Access-Control-Request-Headers") || "x-auth-token"
+            }
+        });
     }
 
     // 验证 Auth Token（如果设置了 AUTH_TOKEN）
@@ -22,7 +46,7 @@ async function handleRequest(request) {
                 status: 401,
                 headers: {
                     "Content-Type": "text/plain",
-                    ...makeCORSHeaders()
+                    ...corsHeaders  // 使用动态的 CORS 头
                 }
             });
         }
@@ -32,26 +56,15 @@ async function handleRequest(request) {
     const path = requestUrl.pathname;
     switch (path) {
         case "/tts":
-            return handleTTS(requestUrl, request);
+            return handleTTS(requestUrl, request, corsHeaders);  // 传递 corsHeaders
         case "/voices":
-            return handleVoices(requestUrl);
+            return handleVoices(requestUrl, corsHeaders);  // 传递 corsHeaders
         default:
-            return handleDefault(requestUrl);
+            return handleDefault(requestUrl, corsHeaders);  // 传递 corsHeaders
     }
 }
 
-async function handleOptions(request) {
-    return new Response(null, {
-        status: 204,
-        headers: {
-            ...makeCORSHeaders(),
-            "Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS",
-            "Access-Control-Allow-Headers": request.headers.get("Access-Control-Request-Headers") || "x-auth-token"
-        }
-    });
-}
-
-async function handleTTS(requestUrl, request) {
+async function handleTTS(requestUrl, request, corsHeaders) {
     if (request.method === "POST") {
         try {
             const body = await request.json();
@@ -61,15 +74,15 @@ async function handleTTS(requestUrl, request) {
             const pitch = Number(body.pitch) || 0;
             const outputFormat = body.format || "audio-24khz-48kbitrate-mono-mp3";
             const download = !body.preview;
-            
+
             const response = await getVoice(text, voiceName, rate, pitch, outputFormat, download);
-            return addCORSHeaders(response);
+            return addCORSHeaders(response, corsHeaders);  // 传递 corsHeaders
         } catch (error) {
             return new Response(JSON.stringify({ error: error.message }), {
                 status: 400,
                 headers: {
                     "Content-Type": "application/json",
-                    ...makeCORSHeaders()
+                    ...corsHeaders  // 使用动态的 CORS 头
                 }
             });
         }
@@ -83,14 +96,14 @@ async function handleTTS(requestUrl, request) {
         const download = requestUrl.searchParams.get("d") === "true";
         try {
             const response = await getVoice(text, voiceName, rate, pitch, outputFormat, download);
-            return addCORSHeaders(response);
+            return addCORSHeaders(response, corsHeaders);  // 传递 corsHeaders
         } catch (error) {
             return new Response("Internal Server Error", { status: 500 });
         }
     }
 }
 
-async function handleVoices(requestUrl) {
+async function handleVoices(requestUrl, corsHeaders) {
     const localeFilter = (requestUrl.searchParams.get("l") || "").toLowerCase();
     const format = requestUrl.searchParams.get("f");
     try {
@@ -103,7 +116,7 @@ async function handleVoices(requestUrl) {
             return new Response(formattedVoices.join("\n"), {
                 headers: {
                     "Content-Type": "application/html; charset=utf-8",
-                    ...makeCORSHeaders()
+                    ...corsHeaders  // 使用动态的 CORS 头
                 }
             });
         } else if (format === "1") {
@@ -111,14 +124,14 @@ async function handleVoices(requestUrl) {
             return new Response(JSON.stringify(voiceMap), {
                 headers: {
                     "Content-Type": "application/json; charset=utf-8",
-                    ...makeCORSHeaders()
+                    ...corsHeaders  // 使用动态的 CORS 头
                 }
             });
         } else {
             return new Response(JSON.stringify(voices), {
                 headers: {
                     "Content-Type": "application/json; charset=utf-8",
-                    ...makeCORSHeaders()
+                    ...corsHeaders  // 使用动态的 CORS 头
                 }
             });
         }
@@ -127,7 +140,7 @@ async function handleVoices(requestUrl) {
     }
 }
 
-function handleDefault(requestUrl) {
+function handleDefault(requestUrl, corsHeaders) {
     const baseUrl = `${requestUrl.protocol}//${requestUrl.host}`;
     const htmlContent = `
     <ol>
@@ -139,7 +152,7 @@ function handleDefault(requestUrl) {
         status: 200,
         headers: {
             "Content-Type": "text/html; charset=utf-8",
-            ...makeCORSHeaders()
+            ...corsHeaders  // 使用动态的 CORS 头
         }
     });
 }
@@ -162,11 +175,7 @@ async function getVoice(text, voiceName, rate, pitch, outputFormat, download) {
     });
 
     if (response.ok) {
-        const newResponse = new Response(response.body, response);
-        if (download) {
-            newResponse.headers.set("Content-Disposition", `attachment; filename="${uuid()}.mp3"`);
-        }
-        return newResponse;
+        return response;
     } else {
         throw new Error(`TTS 请求失败，状态码 ${response.status}`);
     }
@@ -221,11 +230,12 @@ async function voiceList() {
     return response.json();
 }
 
-function addCORSHeaders(response) {
+function addCORSHeaders(response, corsHeaders) {
     const newHeaders = new Headers(response.headers);
-    Object.entries(makeCORSHeaders()).forEach(([key, value]) => {
+    Object.entries(corsHeaders).forEach(([key, value]) => {
         newHeaders.set(key, value);
     });
+
     return new Response(response.body, { ...response, headers: newHeaders });
 }
 
