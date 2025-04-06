@@ -13,7 +13,8 @@ async function handleRequest(request) {
     const allowedOrigins = [
         /\.ciallo\.de$/,
         /\.is-an\.org$/,
-        /\.zwei\.de\.eu\.org$/
+        /\.zwei\.de\.eu\.org$/,
+        /\.ciallo-tts\.pages\.dev$/
     ];
     const origin = request.headers.get("Origin");
 
@@ -76,7 +77,7 @@ async function handleTTS(requestUrl, request, corsHeaders) {
             const download = !body.preview;
 
             const response = await getVoice(text, voiceName, rate, pitch, outputFormat, download);
-            return addCORSHeaders(response, corsHeaders);  // 传递 corsHeaders
+            return addCORSHeaders(response, corsHeaders, download);  // 传递 corsHeaders 和 download
         } catch (error) {
             return new Response(JSON.stringify({ error: error.message }), {
                 status: 400,
@@ -96,7 +97,7 @@ async function handleTTS(requestUrl, request, corsHeaders) {
         const download = requestUrl.searchParams.get("d") === "true";
         try {
             const response = await getVoice(text, voiceName, rate, pitch, outputFormat, download);
-            return addCORSHeaders(response, corsHeaders);  // 传递 corsHeaders
+            return addCORSHeaders(response, corsHeaders, download);  // 传递 corsHeaders 和 download
         } catch (error) {
             return new Response("Internal Server Error", { status: 500 });
         }
@@ -230,15 +231,21 @@ async function voiceList() {
     return response.json();
 }
 
-function addCORSHeaders(response, corsHeaders) {
+function addCORSHeaders(response, corsHeaders, download) {
     const newHeaders = new Headers(response.headers);
     Object.entries(corsHeaders).forEach(([key, value]) => {
         newHeaders.set(key, value);
     });
 
-    return new Response(response.body, { ...response, headers: newHeaders });
-}
+    // 将response.body转换为可读的流
+    const body = response.body;
+    const newResponse = new Response(body, { ...response, headers: newHeaders });
+    if (download) {
+        newResponse.headers.set("Content-Disposition", `attachment; filename="${uuid()}.mp3"`);
+    }
 
+    return newResponse;
+}
 function makeCORSHeaders() {
     return {
         "Access-Control-Allow-Origin": "*", // 可以将 "*" 替换为特定的来源，例如 "https://example.com"
@@ -247,7 +254,6 @@ function makeCORSHeaders() {
         "Access-Control-Max-Age": "86400" // 允许OPTIONS请求预检缓存的时间
     };
 }
-
 async function refreshEndpoint() {
     if (!expiredAt || Date.now() / 1000 > expiredAt - 60) {
         endpoint = await getEndpoint();
